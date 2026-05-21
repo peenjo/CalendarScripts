@@ -19,9 +19,9 @@ def create_description(data_row):
     sleep_seconds = float(data_row['Total Sleep Duration'])
 
     column_map = [
-        ["Light Sleep Duration", "Light Sleep:"],
-        ["REM Sleep Duration", "REM Sleep:"],
-        ["Deep Sleep Duration", "Deep Sleep:"],
+        ['Light Sleep Duration', 'Light Sleep:'],
+        ['REM Sleep Duration', 'REM Sleep:'],
+        ['Deep Sleep Duration', 'Deep Sleep:'],
     ]
     for m in column_map:
         description += seconds_to_hours_minutes(data_row[m[0]], m[1])
@@ -93,9 +93,7 @@ def csv_to_ics(input_file, output_file):
                     start_dt = parse_iso_datetime_to_utc(row['Bedtime Start'])
                     end_dt = parse_iso_datetime_to_utc(row['Bedtime End'])
                     
-                    # Convert total sleep duration to hours and minutes
-                    # total_seconds = float(row['Total Sleep Duration'])
-                    sleep_duration_str = seconds_to_hours_minutes(row['Total Sleep Duration'], "Sleep:")
+                    sleep_duration_str = seconds_to_hours_minutes(row['Total Sleep Duration'], 'Sleep:')
                     
                     # Create event
                     event = Event()
@@ -136,7 +134,7 @@ def csv_to_ics(input_file, output_file):
 def main():
     parser = argparse.ArgumentParser(
         description="Convert Oura sleep data CSV to an iCalendar (.ics) file.",
-        epilog="Example: python csv_to_ics.py oura_data.csv my_calendar.ics"
+        epilog="Example: python convert_oura_sleep_data.py oura_data.csv my_calendar.ics"
     )
     
     parser.add_argument(
