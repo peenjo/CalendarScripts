@@ -1,5 +1,6 @@
 *.vcf
 *.ics
+*.csv
 
 .DS_Store
 
