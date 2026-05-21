@@ -5,16 +5,15 @@ from icalendar import Calendar, Event
 import re
 import vobject
 import csv
-from io import StringIO
 
 
 def convert_to_todoist_csv(data_dict, filename="birthdays.csv"):
     # CSV headers
     fieldnames = [
-        "CONTENT", "DESCRIPTION", "DATE", "TYPE", "PRIORITY", 
+        "CONTENT", "DESCRIPTION", "DATE", "TYPE", "PRIORITY",
         "INDENT", "AUTHOR", "DATE_LANG", "TIMEZONE"
     ]
-    
+
     # static info
     AUTHOR = "Eric (9837499)"
     LANGUAGE = "en"
@@ -25,14 +24,12 @@ def convert_to_todoist_csv(data_dict, filename="birthdays.csv"):
 
     with open(filename, mode='w', newline='', encoding='utf-8') as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames)
-        
-        # Write header
         writer.writeheader()
-        
+
         for row in data_dict:
-            content = row[0] # title 
-            description = row[1] # ISO date string for original birthday
-            date_val = row[2].strftime('%Y-%m-%d') + " 09:00" # current year birthday at 9am
+            content = row[0]  # title
+            description = row[1]  # ISO date string for original birthday
+            date_val = row[2].strftime('%Y-%m-%d') + " 09:00"  # current year birthday at 9am
             writer.writerow({
                 "CONTENT": content,
                 "DESCRIPTION": description,
@@ -44,10 +41,10 @@ def convert_to_todoist_csv(data_dict, filename="birthdays.csv"):
                 "DATE_LANG": LANGUAGE,
                 "TIMEZONE": TIMEZONE
             })
-            
+
 
 def generate_birthday_event(
-    title: str, birthday_date: datetime, this_years_birthday: datetime
+        title: str, birthday_date: date, this_years_birthday: date
 ) -> Event:
     """Creates a recurring annual birthday event.
     """
@@ -60,7 +57,7 @@ def generate_birthday_event(
 
 
 def convert(
-    input_vcf_file_path: str, output_file_path: str, event_title: str = "BDay"
+        input_vcf_file_path: str, output_file_path: str, event_title: str = "BDay"
 ):
     """Converts a .vcf contacts file from Proton Mail to a birthday calendar
     .ics that can be imported into Proton Calendar.
@@ -134,7 +131,8 @@ def convert(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(prog='Birthday Calendar Converter', description='Converts a .vcf contacts file from Proton Mail to a birthday calendar .ics that can be imported into Proton Calendar.')
+    parser = argparse.ArgumentParser(prog='Birthday Calendar Converter',
+                                     description='Converts a .vcf contacts file from Proton Mail to a birthday calendar .ics that can be imported into Proton Calendar.')
     parser.add_argument('input', type=str, help='Path to the contacts (.vcf) file.')
     parser.add_argument('output', type=str, help='Path to the output files.')
 
