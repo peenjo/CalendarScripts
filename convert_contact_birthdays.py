@@ -1,7 +1,7 @@
-"""Contacts to birthday calendar converter."""
+"""Contacts to birthday calendar converter with Email Notifications."""
 import argparse
-from datetime import datetime, date
-from icalendar import Calendar, Event
+from datetime import datetime, date, timedelta
+from icalendar import Calendar, Event, Alarm
 import re
 import vobject
 import csv
@@ -46,13 +46,38 @@ def convert_to_todoist_csv(data_dict, filename="birthdays.csv"):
 def generate_birthday_event(
         title: str, birthday_date: date, this_years_birthday: date
 ) -> Event:
-    """Creates a recurring annual birthday event.
+    """Creates a recurring annual birthday event with email notifications.
+
+    Adds two VALARM components for all-day events:
+    1. 1 week before at 8am (6 days + 16 hours before midnight event start)
+    2. 1 day before at 8am (16 hours before midnight event start)
+
+    Note: All-day events start at 00:00 (midnight), so to trigger at 8am
+    the day/week before, we need to offset by 16 hours from the previous day.
     """
     event = Event()
     event.add("summary", title)
     event.add("description", birthday_date)
+    # All-day event (DATE type, no time component)
     event.add("dtstart", this_years_birthday, parameters={"VALUE": "DATE"})
     event.add("rrule", {"freq": "yearly"})
+
+    # --- Alarm 1: 1 Week Before at 8am ---
+    # 6 days + 16 hours before midnight = 8am, 1 week prior
+    alarm_week = Alarm()
+    alarm_week.add("action", "EMAIL")
+    alarm_week.add("trigger", timedelta(days=-6, hours=-16))
+    alarm_week.add("description", f"Reminder: {title} is in 1 week!")
+    event.add_component(alarm_week)
+
+    # --- Alarm 2: 1 Day Before at 8am ---
+    # 16 hours before midnight = 8am, 1 day prior
+    alarm_day = Alarm()
+    alarm_day.add("action", "EMAIL")
+    alarm_day.add("trigger", timedelta(hours=-16))
+    alarm_day.add("description", f"Reminder: {title} is tomorrow!")
+    event.add_component(alarm_day)
+
     return event
 
 
@@ -73,6 +98,8 @@ def convert(
     """
 
     birthdays = Calendar()
+    birthdays.add("prodid", "-//Lumo Birthday Converter//")
+    birthdays.add("version", "2.0")
 
     with open(file=input_vcf_file_path, mode="r", encoding="utf-8") as vcf_file:
         data = vcf_file.read()
@@ -124,10 +151,10 @@ def convert(
                 print(event.get(key="SUMMARY"))
                 birthdays.add_component(event)
 
-    convert_to_todoist_csv(bday_list, filename=output_file_path + '.csv')
+            convert_to_todoist_csv(bday_list, filename=output_file_path + '.csv')
 
-    with open(output_file_path + '.ics', "wb") as ics_file:
-        ics_file.write(birthdays.to_ical())
+            with open(output_file_path + '.ics', "wb") as ics_file:
+                ics_file.write(birthdays.to_ical())
 
 
 if __name__ == "__main__":
