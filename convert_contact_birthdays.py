@@ -29,7 +29,7 @@ def convert_to_todoist_csv(data_dict, filename="birthdays.csv"):
         for row in data_dict:
             content = row[0]  # title
             description = row[1]  # ISO date string for original birthday
-            date_val = row[2].strftime('%Y-%m-%d') + " 09:00"  # current year birthday at 9am
+            date_val = row[2].strftime('%Y-%m-%d') + " 07:00"  # current year birthday at 7am
             writer.writerow({
                 "CONTENT": content,
                 "DESCRIPTION": description,
