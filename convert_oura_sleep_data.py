@@ -14,10 +14,11 @@ def seconds_to_hours_minutes(raw_seconds:str, title:str):
     return f"{title} {hours}h{minutes}m"
 
 def create_description(data_row):
-    """Create a description """
+    """Create a detailed description of the sleep data"""
     description = f"Oura sleep data for {data_row['date']}\n"
     sleep_seconds = float(data_row['Total Sleep Duration'])
 
+    # sleep stages (have same format)
     column_map = [
         ['Light Sleep Duration', 'Light Sleep:'],
         ['REM Sleep Duration', 'REM Sleep:'],
@@ -28,7 +29,14 @@ def create_description(data_row):
         percent = round((float(data_row[m[0]])/sleep_seconds)*100)
         description += f"  {percent}%\n"
 
+    # awake time
     description += seconds_to_hours_minutes(data_row['Awake Time'], 'Awake:') + f"\n"
+
+    # total duration
+    total_seconds = sleep_seconds + float(data_row['Awake Time'])
+    description += seconds_to_hours_minutes(total_seconds, 'Total Duration:') + f"\n"
+
+    # sleep efficiency
     description += f"Sleep Efficiency: {data_row['Sleep Efficiency']}%"
     return description
 
@@ -93,7 +101,7 @@ def csv_to_ics(input_file, output_file):
                     start_dt = parse_iso_datetime_to_utc(row['Bedtime Start'])
                     end_dt = parse_iso_datetime_to_utc(row['Bedtime End'])
                     
-                    sleep_duration_str = seconds_to_hours_minutes(row['Total Sleep Duration'], 'Sleep:')
+                    sleep_duration_str = seconds_to_hours_minutes(row['Total Sleep Duration'], 'Asleep:')
                     
                     # Create event
                     event = Event()
