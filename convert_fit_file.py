@@ -8,7 +8,8 @@ Usage: python fit_to_ical.py your_activity.fit [-o custom_name.ics]
 import argparse
 import math
 import os
-from datetime import datetime, timedelta
+import sys
+from datetime import datetime, timedelta, timezone
 
 import fitdecode
 from icalendar import Calendar, Event
@@ -28,7 +29,6 @@ def extract_sessions_from_fit(fit_file_path):
                     session_data = {}
 
                     for field in frame.fields:
-                        print(field.name, field.value)
                         session_data[field.name] = field.value
 
                     sessions.append(session_data)
@@ -37,7 +37,7 @@ def extract_sessions_from_fit(fit_file_path):
 
 
 def get_session_title(session_data):
-    """Extract meaningful title from session data."""
+    """Extract meaningful title from session data in title case."""
     preferred_fields = ['name', 'local_description', 'sport', 'sub_sport']
 
     for field in preferred_fields:
@@ -45,7 +45,9 @@ def get_session_title(session_data):
             value = session_data[field]
             if isinstance(value, tuple):
                 value = value[0]
-            return str(value)
+            # Convert to title case
+            title_str = str(value)
+            return title_str.title()
 
     return "Fitness Activity"
 
@@ -65,7 +67,13 @@ def create_ics_event(session_data, output_filename=None):
     title = get_session_title(session_data)
     duration_minutes = calculate_duration_minutes(session_data)
 
+    # Use start_time directly (already a datetime from fitdecode)
     start_time = session_data.get('start_time')
+
+    if start_time is None:
+        # Fallback to current time if timestamp is missing
+        start_time = datetime.now(tz=timezone.utc)
+
     end_time = start_time + timedelta(minutes=duration_minutes)
 
     # Build the iCalendar object
@@ -80,7 +88,7 @@ def create_ics_event(session_data, output_filename=None):
     event.add('summary', title)
     event.add('dtstart', start_time)
     event.add('dtend', end_time)
-    event.add('dtstamp', datetime.utcnow())
+    event.add('dtstamp', datetime.now(tz=timezone.utc))
     event.add('description', str(duration_minutes) + ' minutes')
 
     cal.add_component(event)
@@ -193,7 +201,5 @@ def main(args):
 
 
 if __name__ == '__main__':
-    import sys
-
     args = parse_args()
     main(args)
