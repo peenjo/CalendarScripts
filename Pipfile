@@ -6,6 +6,7 @@ name = "pypi"
 [packages]
 vobject = "*"
 icalendar = "*"
+fitdecode = "*"
 
 [dev-packages]
 pylint = "*"

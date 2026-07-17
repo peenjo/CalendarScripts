@@ -1,6 +1,8 @@
 *.vcf
 *.ics
 *.csv
+*.fit
+*.gz
 
 .DS_Store
 .idea
