@@ -25,7 +25,7 @@ def calculate_duration_minutes(seconds):
     return math.ceil(seconds / 60)
 
 
-def create_calendar(workouts):
+def create_calendar(workouts, cut_off_date=None):
     cal = Calendar()
     cal.add('prodid', '-//Workout Calendar//EN')
     cal.add('version', '2.0')
@@ -39,6 +39,11 @@ def create_calendar(workouts):
             continue
 
         dt_start = datetime.strptime(data['date'], '%Y-%m-%d %H:%M:%S').replace(second=0)
+
+        # Skip entries before the cut-off date
+        if cut_off_date and dt_start < cut_off_date:
+            continue
+
         dt_end = dt_start + timedelta(minutes=duration_min)
 
         uid = dt_start.isoformat(timespec='minutes') + '@strong'
@@ -69,14 +74,25 @@ def parse_args():
         default='strong_workouts.ics',
         help='Path to the output ICS file (default: strong_workouts.ics).'
     )
+    parser.add_argument(
+        '-c', '--cut-off-date',
+        dest='cut_off_date',
+        default=None,
+        help='Skip entries before this date, in ISO format YYYY-MM-DD.'
+    )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
 
+    # Parse the cut-off date if provided
+    cut_off_date = None
+    if args.cut_off_date:
+        cut_off_date = datetime.strptime(args.cut_off_date, '%Y-%m-%d')
+
     workouts = read_workouts(args.input_file)
-    calendar = create_calendar(workouts)
+    calendar = create_calendar(workouts, cut_off_date=cut_off_date)
 
     with open(args.output_file, 'wb') as f:
         f.write(calendar.to_ical())
