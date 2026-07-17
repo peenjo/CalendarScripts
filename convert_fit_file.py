@@ -5,11 +5,13 @@ Converts Garmin/FIT workout session data into an iCalendar (.ics) event.
 Usage:
   python fit_to_ical.py <directory> [-o output.ics]
 
-Processes all .fit files in the given directory (case-insensitive extension)
-and creates a single .ics file containing all session events.
+Processes all .fit and .fit.gz files in the given directory (case-insensitive
+extension) and creates a single .ics file containing all session events.
 """
 
 import argparse
+import gzip
+import io
 import math
 import os
 import sys
@@ -20,14 +22,48 @@ import fitdecode
 from icalendar import Calendar, Event
 
 
+def find_fit_files(directory):
+    """
+    Find all .fit and .fit.gz files in a directory (case-insensitive extension).
+    A .gz file is included only if the inner file name ends in .fit.
+    """
+    dir_path = Path(directory)
+    all_files = [f for f in dir_path.iterdir() if f.is_file()]
+
+    fit_files = []
+    for f in all_files:
+        suffixes = [s.lower() for s in f.suffixes]
+        if suffixes == ['.fit']:
+            fit_files.append(f)
+        elif len(suffixes) >= 2 and suffixes[-2:] == ['.fit', '.gz']:
+            fit_files.append(f)
+
+    return sorted(fit_files, key=lambda p: p.name.lower())
+
+
+def get_fit_reader(fit_file_path):
+    """
+    Return a FitReader, handling both plain .fit and gzipped .fit.gz files.
+    For .gz files, decompresses in memory and wraps in a BytesIO.
+    """
+    path = Path(fit_file_path)
+    if path.suffix.lower() == '.gz':
+        with gzip.open(fit_file_path, 'rb') as gz:
+            data = gz.read()
+        return fitdecode.FitReader(io.BytesIO(data))
+    else:
+        return fitdecode.FitReader(fit_file_path)
+
+
 def extract_sessions_from_fit(fit_file_path):
     """
     Parse FIT file and extract all session records.
+    Handles both plain .fit and gzipped .fit.gz files.
     Returns a list of dictionaries containing session field data.
     """
     sessions = []
 
-    with fitdecode.FitReader(fit_file_path) as fit:
+    with get_fit_reader(fit_file_path) as fit:
         for frame in fit:
             if isinstance(frame, fitdecode.FitDataMessage):
                 if frame.name == 'session':
@@ -95,40 +131,29 @@ def create_event_from_session(session_data):
     }
 
 
-def find_fit_files(directory):
-    """Find all .fit files in a directory (case-insensitive extension matching)."""
-    dir_path = Path(directory)
-    # List all files and filter by extension case-insensitively
-    all_files = [f for f in dir_path.iterdir() if f.is_file()]
-    fit_files = [f for f in all_files if f.suffix.lower() == '.fit']
-    return sorted(fit_files, key=lambda p: p.name.lower())
-
-
 def derive_default_output_path(directory):
     """
     Derive default output file path.
-    Returns 'fit_workouts.ics' for current directory ('.'), otherwise directory_name.ics
+    Returns 'fit_workouts.ics' for current directory ('.'),
+    otherwise directory_name.ics
     """
-    # Normalize the directory path
     norm_dir = os.path.normpath(directory)
 
-    # Check if it's the current directory (., ./, or empty path equivalent)
-    is_current_dir = norm_dir in ('.', './', '', '.')
-
-    if is_current_dir:
+    if norm_dir in ('.', ''):
         return 'fit_workouts.ics'
-    else:
-        dir_name = os.path.basename(os.path.normpath(norm_dir.rstrip('/\\')))
-        if not dir_name:
-            return 'fit_workouts.ics'
-        return os.path.join(directory, dir_name + '.ics')
+
+    dir_name = os.path.basename(norm_dir)
+    if not dir_name or dir_name in ('.', '..'):
+        return 'fit_workouts.ics'
+    return os.path.join(directory, dir_name + '.ics')
 
 
 def parse_args():
     """Parse command line arguments using argparse."""
     parser = argparse.ArgumentParser(
         description='Convert FIT workout files to iCalendar (.ics) format. '
-                    'Processes all .fit files in a directory (case-insensitive extension).',
+                    'Processes all .fit and .fit.gz files in a directory '
+                    '(case-insensitive extension).',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -142,9 +167,10 @@ Examples:
       Creates: calendar.ics
 
   %(prog)s .
-      Creates: workouts.ics
+      Creates: fit_workouts.ics
 
-Note: Files with .fit, .FIT, .Fit extensions are all recognized.
+Note: Files with .fit, .FIT, .Fit, .fit.gz, .FIT.GZ extensions are all
+      recognized. Gzipped files are decompressed automatically.
         """
     )
 
@@ -157,7 +183,8 @@ Note: Files with .fit, .FIT, .Fit extensions are all recognized.
         '-o', '--output',
         dest='output_file',
         default=None,
-        help='Output ICS file name (default: directory name + .ics, or workouts.ics for current directory)'
+        help='Output ICS file name (default: directory name + .ics, '
+             'or fit_workouts.ics for current directory)'
     )
 
     args = parser.parse_args()
@@ -174,12 +201,12 @@ def main(args):
         print(f"❌ Error: Directory not found: '{directory}'")
         sys.exit(1)
 
-    # Find all .fit files (case-insensitive extension)
+    # Find all .fit and .fit.gz files (case-insensitive extension)
     fit_files = find_fit_files(directory)
 
     if not fit_files:
         print(f"❌ No .fit files found in '{directory}'")
-        print("   (supports .fit, .FIT, .Fit, etc.)")
+        print("   (supports .fit, .FIT, .Fit, .fit.gz, .FIT.GZ, etc.)")
         sys.exit(1)
 
     # Derive output filename if not provided
