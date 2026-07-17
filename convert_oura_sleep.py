@@ -148,7 +148,7 @@ def csv_to_ics(input_file, output_file):
 def main():
     parser = argparse.ArgumentParser(
         description="Convert Oura sleep data CSV to an iCalendar (.ics) file.",
-        epilog="Example: python convert_oura_sleep_data.py oura_data.csv my_calendar.ics"
+        epilog="Example: python convert_oura_sleep.py oura_data.csv my_calendar.ics"
     )
 
     parser.add_argument(

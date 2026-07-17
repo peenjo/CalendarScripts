@@ -7,6 +7,7 @@ Usage:
 
 Processes all .fit and .fit.gz files in the given directory (case-insensitive
 extension) and creates a single .ics file containing all session events.
+Duplicate events (identical start_times) are automatically filtered out.
 """
 
 import argparse
@@ -153,7 +154,7 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description='Convert FIT workout files to iCalendar (.ics) format. '
                     'Processes all .fit and .fit.gz files in a directory '
-                    '(case-insensitive extension).',
+                    '(case-insensitive extension). Duplicate events are filtered.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -171,6 +172,7 @@ Examples:
 
 Note: Files with .fit, .FIT, .Fit, .fit.gz, .FIT.GZ extensions are all
       recognized. Gzipped files are decompressed automatically.
+      Duplicate events (same start_time) are automatically filtered out.
         """
     )
 
@@ -227,6 +229,8 @@ def main(args):
     cal.add('calscale', 'GREGORIAN')
 
     total_events = 0
+    total_duplicates = 0
+    seen_start_times = set()  # Track unique start times to avoid duplicates
 
     for fit_file in fit_files:
         print(f"\nProcessing: {fit_file.name}")
@@ -242,6 +246,16 @@ def main(args):
 
             for session in sessions:
                 event, info = create_event_from_session(session)
+
+                # Check for duplicate start_time
+                start_key = info['start']
+                if start_key in seen_start_times:
+                    print(f"   🔁 Skipping duplicate (start_time: {start_key})")
+                    total_duplicates += 1
+                    continue
+
+                # Mark this start_time as seen and add event
+                seen_start_times.add(start_key)
                 cal.add_component(event)
                 total_events += 1
 
@@ -265,6 +279,8 @@ def main(args):
 
     print(f"🎉 Created {output_file}")
     print(f"   Total events: {total_events}")
+    if total_duplicates > 0:
+        print(f"   Duplicates skipped: {total_duplicates}")
     print(f"   From {len(fit_files)} FIT file(s)")
 
 
