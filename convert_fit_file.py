@@ -2,7 +2,11 @@
 fit_to_ical.py
 Converts Garmin/FIT workout session data into an iCalendar (.ics) event.
 
-Usage: python fit_to_ical.py your_activity.fit [-o custom_name.ics]
+Usage:
+  python fit_to_ical.py <directory> [-o output.ics]
+
+Processes all .fit files in the given directory (case-insensitive extension)
+and creates a single .ics file containing all session events.
 """
 
 import argparse
@@ -10,6 +14,7 @@ import math
 import os
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import fitdecode
 from icalendar import Calendar, Event
@@ -61,26 +66,17 @@ def calculate_duration_minutes(session_data):
     return math.ceil(int(total_elapsed_time) / 60)
 
 
-def create_ics_event(session_data, output_filename=None):
-    """Create a single iCalendar event from session data."""
-
+def create_event_from_session(session_data):
+    """Create a single iCalendar Event from session data."""
     title = get_session_title(session_data)
     duration_minutes = calculate_duration_minutes(session_data)
 
-    # Use start_time directly (already a datetime from fitdecode)
     start_time = session_data.get('start_time')
 
     if start_time is None:
-        # Fallback to current time if timestamp is missing
         start_time = datetime.now(tz=timezone.utc)
 
     end_time = start_time + timedelta(minutes=duration_minutes)
-
-    # Build the iCalendar object
-    cal = Calendar()
-    cal.add('prodid', '-//FIT to iCalendar Converter//EN')
-    cal.add('version', '2.0')
-    cal.add('calscale', 'GREGORIAN')
 
     event = Event()
     uid = start_time.isoformat() + '@fit'
@@ -91,58 +87,77 @@ def create_ics_event(session_data, output_filename=None):
     event.add('dtstamp', datetime.now(tz=timezone.utc))
     event.add('description', str(duration_minutes) + ' minutes')
 
-    cal.add_component(event)
-
-    if output_filename is None:
-        safe_title = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in title)
-        output_filename = f"{safe_title[:50]}.ics"
-
-    with open(output_filename, 'wb') as f:
-        f.write(cal.to_ical())
-
-    return output_filename, {
+    return event, {
         'title': title,
         'start': start_time.isoformat(),
         'end': end_time.isoformat(),
         'duration_min': duration_minutes,
-        'output_file': output_filename
     }
 
 
-def derive_output_filename(input_filepath):
-    """Derive output filename by replacing extension with .ics."""
-    base, ext = os.path.splitext(input_filepath)
-    return base + '.ics'
+def find_fit_files(directory):
+    """Find all .fit files in a directory (case-insensitive extension matching)."""
+    dir_path = Path(directory)
+    # List all files and filter by extension case-insensitively
+    all_files = [f for f in dir_path.iterdir() if f.is_file()]
+    fit_files = [f for f in all_files if f.suffix.lower() == '.fit']
+    return sorted(fit_files, key=lambda p: p.name.lower())
+
+
+def derive_default_output_path(directory):
+    """
+    Derive default output file path.
+    Returns 'fit_workouts.ics' for current directory ('.'), otherwise directory_name.ics
+    """
+    # Normalize the directory path
+    norm_dir = os.path.normpath(directory)
+
+    # Check if it's the current directory (., ./, or empty path equivalent)
+    is_current_dir = norm_dir in ('.', './', '', '.')
+
+    if is_current_dir:
+        return 'fit_workouts.ics'
+    else:
+        dir_name = os.path.basename(os.path.normpath(norm_dir.rstrip('/\\')))
+        if not dir_name:
+            return 'fit_workouts.ics'
+        return os.path.join(directory, dir_name + '.ics')
 
 
 def parse_args():
     """Parse command line arguments using argparse."""
     parser = argparse.ArgumentParser(
-        description='Convert FIT workout files to iCalendar (.ics) format.',
+        description='Convert FIT workout files to iCalendar (.ics) format. '
+                    'Processes all .fit files in a directory (case-insensitive extension).',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s activity.fit
-      Creates: activity.ics
-  
-  %(prog)s workout.fit -o meeting.ics
-      Creates: meeting.ics
-  
-  %(prog)s garmin_run.fit --output marathon.ics
-      Creates: marathon.ics
+  %(prog)s ./activities
+      Creates: activities/activities.ics
+
+  %(prog)s ./workouts -o all_workouts.ics
+      Creates: all_workouts.ics
+
+  %(prog)s /home/user/garmin/export --output calendar.ics
+      Creates: calendar.ics
+
+  %(prog)s .
+      Creates: workouts.ics
+
+Note: Files with .fit, .FIT, .Fit extensions are all recognized.
         """
     )
 
     parser.add_argument(
-        'fit_file',
-        help='Input FIT file path (required)'
+        'directory',
+        help='Directory containing FIT files to process'
     )
 
     parser.add_argument(
         '-o', '--output',
         dest='output_file',
         default=None,
-        help='Output ICS file name (default: input filename with .fit changed to .ics)'
+        help='Output ICS file name (default: directory name + .ics, or workouts.ics for current directory)'
     )
 
     args = parser.parse_args()
@@ -151,53 +166,79 @@ Examples:
 
 def main(args):
     """Main entry point."""
-    fit_file_path = args.fit_file
+    directory = args.directory
     output_file = args.output_file
 
-    # Validate input file
-    if not os.path.exists(fit_file_path):
-        print(f"❌ Error: File not found: '{fit_file_path}'")
+    # Validate directory
+    if not os.path.isdir(directory):
+        print(f"❌ Error: Directory not found: '{directory}'")
+        sys.exit(1)
+
+    # Find all .fit files (case-insensitive extension)
+    fit_files = find_fit_files(directory)
+
+    if not fit_files:
+        print(f"❌ No .fit files found in '{directory}'")
+        print("   (supports .fit, .FIT, .Fit, etc.)")
         sys.exit(1)
 
     # Derive output filename if not provided
     if output_file is None:
-        output_file = derive_output_filename(fit_file_path)
+        output_file = derive_default_output_path(directory)
 
-    print(f"📁 Reading FIT file: {fit_file_path}")
-    print(f"📝 Writing to: {output_file}")
+    print(f"📁 Scanning directory: {directory}")
+    print(f"🔍 Found {len(fit_files)} FIT file(s):")
+    for f in fit_files:
+        print(f"   • {f.name}")
+    print(f"📝 Output: {output_file}")
     print("-" * 50)
 
-    sessions = extract_sessions_from_fit(fit_file_path)
+    # Create calendar
+    cal = Calendar()
+    cal.add('prodid', '-//FIT to iCalendar Converter//EN')
+    cal.add('version', '2.0')
+    cal.add('calscale', 'GREGORIAN')
 
-    if not sessions:
-        print("❌ No session records found in this FIT file.")
-        sys.exit(1)
+    total_events = 0
 
-    print(f"✅ Found {len(sessions)} session(s)\n")
-
-    created_files = []
-    for idx, session in enumerate(sessions, 1):
-        print(f"Session {idx}:")
+    for fit_file in fit_files:
+        print(f"\nProcessing: {fit_file.name}")
 
         try:
-            filename, info = create_ics_event(session, output_file)
-            created_files.append(filename)
+            sessions = extract_sessions_from_fit(str(fit_file))
 
-            print(f"   Title: {info['title']}")
-            print(f"   Start: {info['start']}")
-            print(f"   End:   {info['end']}")
-            print(f"   Duration: {info['duration_min']} min(s)")
-            print(f"   Output: {info['output_file']} ✓")
+            if not sessions:
+                print(f"   ⚠️  No session records found, skipping")
+                continue
+
+            print(f"   ✅ Found {len(sessions)} session(s)")
+
+            for session in sessions:
+                event, info = create_event_from_session(session)
+                cal.add_component(event)
+                total_events += 1
+
+                print(f"   • {info['title']}")
+                print(f"     Start: {info['start']}")
+                print(f"     End:   {info['end']}")
+                print(f"     Duration: {info['duration_min']} min")
 
         except Exception as e:
             print(f"   ❌ Error processing: {e}")
 
-        print()
+    # Write the single ICS file with all events
+    print("\n" + "=" * 50)
 
-    print("=" * 50)
-    print(f"🎉 Successfully created {len(created_files)} .ics file(s)")
-    for fname in created_files:
-        print(f"   • {fname}")
+    if total_events == 0:
+        print("❌ No events were created from any FIT file.")
+        sys.exit(1)
+
+    with open(output_file, 'wb') as f:
+        f.write(cal.to_ical())
+
+    print(f"🎉 Created {output_file}")
+    print(f"   Total events: {total_events}")
+    print(f"   From {len(fit_files)} FIT file(s)")
 
 
 if __name__ == '__main__':
