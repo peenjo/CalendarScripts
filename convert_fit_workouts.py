@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 """
 fit_to_ical.py
 Converts Garmin/FIT workout session data into an iCalendar (.ics) event.

@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 """
 summarize_workouts.py
 Summarize weekly time spent on workout categories from an iCalendar (.ics) file.

@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 """Contacts to birthday calendar converter with Email Notifications."""
 import argparse
 from datetime import datetime, date, timedelta
