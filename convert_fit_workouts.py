@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 
 """
-fit_to_ical.py
+convert_fit_workouts.py
 Converts Garmin/FIT workout session data into an iCalendar (.ics) event.
 
 Usage:
-  python fit_to_ical.py <directory> [-o output.ics]
+  python convert_fit_workouts.py <directory> [-o output.ics]
 
-Processes all .fit and .fit.gz files in the given directory (case-insensitive
-extension) and creates a single .ics file containing all session events.
+Finds the most recent zip file containing 'Workout' in its name in the given
+directory, extracts it to a temporary location, processes all .fit and .fit.gz
+files found inside, and creates a single .ics file containing all session events.
 Duplicate events (identical start_times) are automatically filtered out.
 """
 
@@ -17,7 +18,10 @@ import gzip
 import io
 import math
 import os
+import shutil
 import sys
+import tempfile
+import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -25,13 +29,51 @@ import fitdecode
 from icalendar import Calendar, Event
 
 
+def find_most_recent_workout_zip(directory):
+    """
+    Find the most recent .zip file containing 'Workout' in its name
+    (case-insensitive) in the given directory.
+    """
+    expanded_dir = os.path.expanduser(directory)
+    dir_path = Path(expanded_dir)
+
+    if not dir_path.is_dir():
+        print(f"❌ Error: Directory not found: '{expanded_dir}'")
+        sys.exit(1)
+
+    matching_zips = []
+    for f in dir_path.iterdir():
+        if f.is_file() and f.suffix.lower() == '.zip':
+            if 'workout' in f.name.lower():
+                matching_zips.append(f)
+
+    if not matching_zips:
+        print(f"❌ No .zip files with 'Workout' in the name found in '{expanded_dir}'")
+        sys.exit(1)
+
+    # Sort by modification time (most recent first)
+    matching_zips.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+
+    return matching_zips[0]
+
+
+def extract_zip(zip_path, dest_dir):
+    """
+    Extract all contents of a zip file to the destination directory.
+    Flattens nested directories into dest_dir.
+    """
+    with zipfile.ZipFile(zip_path, 'r') as zf:
+        zf.extractall(dest_dir)
+
+
 def find_fit_files(directory):
     """
-    Find all .fit and .fit.gz files in a directory (case-insensitive extension).
+    Find all .fit and .fit.gz files in a directory (case-insensitive extension),
+    including subdirectories.
     A .gz file is included only if the inner file name ends in .fit.
     """
     dir_path = Path(directory)
-    all_files = [f for f in dir_path.iterdir() if f.is_file()]
+    all_files = [f for f in dir_path.rglob('*') if f.is_file()]
 
     fit_files = []
     for f in all_files:
@@ -134,61 +176,62 @@ def create_event_from_session(session_data):
     }
 
 
-def derive_default_output_path(directory):
+def derive_default_output_path(zip_file_path, output_directory):
     """
     Derive default output file path.
-    Returns 'fit_workouts.ics' for current directory ('.'),
-    otherwise directory_name.ics
+    Returns zip_file_stem.ics in the output_directory.
     """
-    norm_dir = os.path.normpath(directory)
-
-    if norm_dir in ('.', ''):
-        return 'fit_workouts.ics'
-
-    dir_name = os.path.basename(norm_dir)
-    if not dir_name or dir_name in ('.', '..'):
-        return 'fit_workouts.ics'
-    return os.path.join(directory, dir_name + '.ics')
+    expanded_output_dir = os.path.expanduser(output_directory)
+    zip_path = Path(zip_file_path)
+    output_name = zip_path.stem + '.ics'
+    output_path = Path(expanded_output_dir) / output_name
+    return str(output_path)
 
 
 def parse_args():
     """Parse command line arguments using argparse."""
     parser = argparse.ArgumentParser(
+        prog='convert_fit_workouts',
         description='Convert FIT workout files to iCalendar (.ics) format. '
-                    'Processes all .fit and .fit.gz files in a directory '
-                    '(case-insensitive extension). Duplicate events are filtered.',
+                    'Finds the most recent zip file containing "Workout" in the name, '
+                    'extracts it, and processes all .fit and .fit.gz files found inside. '
+                    'Duplicate events are filtered.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s ./activities
-      Creates: activities/activities.ics
+  %(prog)s
+      Searches ~/Downloads for the most recent *Workout*.zip,
+      extracts and processes it. Outputs to ~/Downloads/<zip_name>.ics
 
-  %(prog)s ./workouts -o all_workouts.ics
-      Creates: all_workouts.ics
+  %(prog)s ~/Garmin/Exports
+      Searches ~/Garmin/Exports for the most recent *Workout*.zip,
+      extracts and processes it. Outputs to ~/Garmin/Exports/<zip_name>.ics
 
-  %(prog)s /home/user/garmin/export --output calendar.ics
-      Creates: calendar.ics
+  %(prog)s ~/Downloads -o all_workouts.ics
+      Same as above, but outputs to all_workouts.ics
 
-  %(prog)s .
-      Creates: fit_workouts.ics
-
-Note: Files with .fit, .FIT, .Fit, .fit.gz, .FIT.GZ extensions are all
-      recognized. Gzipped files are decompressed automatically.
-      Duplicate events (same start_time) are automatically filtered out.
+Note: The zip file is extracted to a temporary directory and cleaned up
+      after processing. Files with .fit, .FIT, .Fit, .fit.gz, .FIT.GZ
+      extensions inside the zip are all recognized. Gzipped files are
+      decompressed automatically. Duplicate events (same start_time) are
+      automatically filtered out.
         """
     )
 
     parser.add_argument(
         'directory',
-        help='Directory containing FIT files to process'
+        nargs='?',
+        default='~/Downloads',
+        help='Directory to search for the most recent *Workout*.zip file. '
+             'Defaults to "~/Downloads".'
     )
 
     parser.add_argument(
         '-o', '--output',
         dest='output_file',
         default=None,
-        help='Output ICS file name (default: directory name + .ics, '
-             'or fit_workouts.ics for current directory)'
+        help='Override output ICS file name. By default, uses the same '
+             'name as the zip file with .ics extension.'
     )
 
     args = parser.parse_args()
@@ -200,90 +243,109 @@ def main(args):
     directory = args.directory
     output_file = args.output_file
 
+    # Expand ~ to home directory
+    directory = os.path.expanduser(directory)
+
     # Validate directory
     if not os.path.isdir(directory):
         print(f"❌ Error: Directory not found: '{directory}'")
         sys.exit(1)
 
-    # Find all .fit and .fit.gz files (case-insensitive extension)
-    fit_files = find_fit_files(directory)
+    # Find the most recent zip file containing 'Workout' in the name
+    zip_file = find_most_recent_workout_zip(directory)
+    print(f"📦 Found zip file: {zip_file.name}")
+    print(f"   Modified: {datetime.fromtimestamp(zip_file.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')}")
 
-    if not fit_files:
-        print(f"❌ No .fit files found in '{directory}'")
-        print("   (supports .fit, .FIT, .Fit, .fit.gz, .FIT.GZ, etc.)")
-        sys.exit(1)
+    # Extract to a temporary directory
+    temp_dir = tempfile.mkdtemp(prefix='fit_extract_')
+    print(f"📂 Extracting to temporary directory: {temp_dir}")
 
-    # Derive output filename if not provided
-    if output_file is None:
-        output_file = derive_default_output_path(directory)
+    try:
+        extract_zip(zip_file, temp_dir)
 
-    print(f"📁 Scanning directory: {directory}")
-    print(f"🔍 Found {len(fit_files)} FIT file(s):")
-    for f in fit_files:
-        print(f"   • {f.name}")
-    print(f"📝 Output: {output_file}")
-    print("-" * 50)
+        # Find all .fit and .fit.gz files (case-insensitive, including subdirs)
+        fit_files = find_fit_files(temp_dir)
 
-    # Create calendar
-    cal = Calendar()
-    cal.add('prodid', '-//FIT to iCalendar Converter//EN')
-    cal.add('version', '2.0')
-    cal.add('calscale', 'GREGORIAN')
+        if not fit_files:
+            print(f"❌ No .fit files found inside '{zip_file.name}'")
+            print("   (supports .fit, .FIT, .Fit, .fit.gz, .FIT.GZ, etc.)")
+            sys.exit(1)
 
-    total_events = 0
-    total_duplicates = 0
-    seen_start_times = set()  # Track unique start times to avoid duplicates
+        # Derive output filename if not provided
+        if output_file is None:
+            output_file = derive_default_output_path(zip_file, directory)
 
-    for fit_file in fit_files:
-        print(f"\nProcessing: {fit_file.name}")
+        print(f"🔍 Found {len(fit_files)} FIT file(s):")
+        for f in fit_files:
+            # Show relative path within temp dir for readability
+            rel_path = os.path.relpath(f, temp_dir)
+            print(f"   • {rel_path}")
+        print(f"📝 Output: {output_file}")
+        print("-" * 50)
 
-        try:
-            sessions = extract_sessions_from_fit(str(fit_file))
+        # Create calendar
+        cal = Calendar()
+        cal.add('prodid', '-//FIT to iCalendar Converter//EN')
+        cal.add('version', '2.0')
+        cal.add('calscale', 'GREGORIAN')
 
-            if not sessions:
-                print(f"   ⚠️  No session records found, skipping")
-                continue
+        total_events = 0
+        total_duplicates = 0
+        seen_start_times = set()
 
-            print(f"   ✅ Found {len(sessions)} session(s)")
+        for fit_file in fit_files:
+            rel_path = os.path.relpath(fit_file, temp_dir)
+            print(f"\nProcessing: {rel_path}")
 
-            for session in sessions:
-                event, info = create_event_from_session(session)
+            try:
+                sessions = extract_sessions_from_fit(str(fit_file))
 
-                # Check for duplicate start_time
-                start_key = info['start']
-                if start_key in seen_start_times:
-                    print(f"   🔁 Skipping duplicate (start_time: {start_key})")
-                    total_duplicates += 1
+                if not sessions:
+                    print(f"   ⚠️  No session records found, skipping")
                     continue
 
-                # Mark this start_time as seen and add event
-                seen_start_times.add(start_key)
-                cal.add_component(event)
-                total_events += 1
+                print(f"   ✅ Found {len(sessions)} session(s)")
 
-                print(f"   • {info['title']}")
-                print(f"     Start: {info['start']}")
-                print(f"     End:   {info['end']}")
-                print(f"     Duration: {info['duration_min']} min")
+                for session in sessions:
+                    event, info = create_event_from_session(session)
 
-        except Exception as e:
-            print(f"   ❌ Error processing: {e}")
+                    start_key = info['start']
+                    if start_key in seen_start_times:
+                        print(f"   🔁 Skipping duplicate (start_time: {start_key})")
+                        total_duplicates += 1
+                        continue
 
-    # Write the single ICS file with all events
-    print("\n" + "=" * 50)
+                    seen_start_times.add(start_key)
+                    cal.add_component(event)
+                    total_events += 1
 
-    if total_events == 0:
-        print("❌ No events were created from any FIT file.")
-        sys.exit(1)
+                    print(f"   • {info['title']}")
+                    print(f"     Start: {info['start']}")
+                    print(f"     End:   {info['end']}")
+                    print(f"     Duration: {info['duration_min']} min")
 
-    with open(output_file, 'wb') as f:
-        f.write(cal.to_ical())
+            except Exception as e:
+                print(f"   ❌ Error processing: {e}")
 
-    print(f"🎉 Created {output_file}")
-    print(f"   Total events: {total_events}")
-    if total_duplicates > 0:
-        print(f"   Duplicates skipped: {total_duplicates}")
-    print(f"   From {len(fit_files)} FIT file(s)")
+        print("\n" + "=" * 50)
+
+        if total_events == 0:
+            print("❌ No events were created from any FIT file.")
+            sys.exit(1)
+
+        with open(output_file, 'wb') as f:
+            f.write(cal.to_ical())
+
+        print(f"🎉 Created {output_file}")
+        print(f"   Total events: {total_events}")
+        if total_duplicates > 0:
+            print(f"   Duplicates skipped: {total_duplicates}")
+        print(f"   From {len(fit_files)} FIT file(s) in {zip_file.name}")
+
+    finally:
+        # Clean up the temporary directory
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        print(f"🧹 Cleaned up temporary directory")
 
 
 if __name__ == '__main__':
