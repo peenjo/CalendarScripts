@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 
+import argparse
 import csv
+import glob
+import os
+import re
 import sys
 from datetime import datetime, timedelta, timezone
-from icalendar import Calendar, Event
-import re
-import os
-import argparse
-import glob
 from pathlib import Path
+
+from icalendar import Calendar, Event
 
 
 def seconds_to_hours_minutes(raw_seconds: str, title: str):
