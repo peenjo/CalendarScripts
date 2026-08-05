@@ -7,6 +7,8 @@ from icalendar import Calendar, Event
 import re
 import os
 import argparse
+import glob
+from pathlib import Path
 
 
 def seconds_to_hours_minutes(raw_seconds: str, title: str):
@@ -79,7 +81,45 @@ def parse_iso_datetime_to_utc(dt_string):
     raise ValueError(f"Unable to parse datetime: {dt_string}")
 
 
-def csv_to_ics(input_file, output_file):
+def find_most_recent_oura_file(directory: str) -> str:
+    """Find the most recent CSV file with 'oura' in the filename."""
+    expanded_dir = os.path.expanduser(directory)
+
+    if not os.path.isdir(expanded_dir):
+        raise FileNotFoundError(f"Directory '{expanded_dir}' does not exist or is not accessible.")
+
+    # Search for CSV files containing 'oura' (case-insensitive)
+    pattern = os.path.join(expanded_dir, '*oura*.csv')
+    matching_files = glob.glob(pattern, recursive=False)
+
+    # Also try case variations
+    pattern_upper = os.path.join(expanded_dir, '*Oura*.csv')
+    matching_files.extend(glob.glob(pattern_upper, recursive=False))
+
+    if not matching_files:
+        raise FileNotFoundError(f"No CSV files with 'oura' found in '{expanded_dir}'.")
+
+    # Remove duplicates (in case patterns matched same files)
+    matching_files = list(set(matching_files))
+
+    # Sort by modification time (most recent first)
+    matching_files.sort(key=os.path.getmtime, reverse=True)
+
+    return matching_files[0]
+
+
+def derive_output_path(input_file: str, output_override: str = None) -> str:
+    """Derive output path: same dir as input, same name with .ics extension."""
+    if output_override:
+        return output_override
+
+    input_path = Path(input_file)
+    output_name = input_path.stem + '.ics'
+    output_path = input_path.parent / output_name
+    return str(output_path)
+
+
+def csv_to_ics(input_file: str, output_file: str):
     """Convert CSV file to iCalendar file with UTC times."""
 
     if not os.path.exists(input_file):
@@ -149,26 +189,44 @@ def csv_to_ics(input_file, output_file):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Convert Oura sleep data CSV to an iCalendar (.ics) file.",
-        epilog="Example: python convert_oura_sleep.py oura_data.csv my_calendar.ics"
+        description="Convert Oura sleep data CSV from a directory to an iCalendar (.ics) file.",
+        epilog="Example: python convert_oura_sleep.py ~/Downloads"
     )
 
     parser.add_argument(
-        'input_file',
+        'input_directory',
         type=str,
-        help='Path to the input CSV file containing sleep data.'
+        nargs='?',
+        default='~/Downloads',
+        help='Path to the directory containing Oura CSV files. Defaults to "~/Downloads". '
+             'Script will find the most recent file with "oura" in the name.'
     )
 
     parser.add_argument(
         '-o', '--output',
         type=str,
-        default='oura_sleep_calendar.ics',
-        help='Path for the output .ics file. Defaults to "oura_sleep_calendar.ics"'
+        default=None,
+        help='Override output .ics file path. By default, output is placed in the same '
+             'directory as the input file with .ics extension.'
     )
 
     args = parser.parse_args()
 
-    csv_to_ics(args.input_file, args.output)
+    try:
+        input_file = find_most_recent_oura_file(args.input_directory)
+        output_file = derive_output_path(input_file, args.output)
+
+        print(f"Input:  {input_file}")
+        print(f"Output: {output_file}")
+
+        csv_to_ics(input_file, output_file)
+
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Unexpected error: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
