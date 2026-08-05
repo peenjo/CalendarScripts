@@ -2,11 +2,53 @@
 
 """Contacts to birthday calendar converter with Email Notifications."""
 import argparse
-from datetime import datetime, date, timedelta
-from icalendar import Calendar, Event, Alarm
-import re
-import vobject
 import csv
+import glob
+import os
+import re
+import sys
+from datetime import datetime, date, timedelta
+from pathlib import Path
+
+import vobject
+from icalendar import Calendar, Event, Alarm
+
+
+def find_most_recent_vcf_file(directory: str) -> str:
+    """Find the most recent file with a .vcf suffix in the given directory."""
+    expanded_dir = os.path.expanduser(directory)
+
+    if not os.path.isdir(expanded_dir):
+        raise FileNotFoundError(f"Directory '{expanded_dir}' does not exist or is not accessible.")
+
+    # Search for .vcf files (case-insensitive)
+    pattern_lower = os.path.join(expanded_dir, '*.vcf')
+    pattern_upper = os.path.join(expanded_dir, '*.VCF')
+    matching_files = glob.glob(pattern_lower, recursive=False)
+    matching_files.extend(glob.glob(pattern_upper, recursive=False))
+
+    if not matching_files:
+        raise FileNotFoundError(f"No .vcf files found in '{expanded_dir}'.")
+
+    # Remove duplicates
+    matching_files = list(set(matching_files))
+
+    # Sort by modification time (most recent first)
+    matching_files.sort(key=os.path.getmtime, reverse=True)
+
+    return matching_files[0]
+
+
+def derive_output_path(input_file: str, output_override: str = None) -> str:
+    """Derive output path: same dir as input, default name 'birthday_<current_year>.'"""
+    if output_override:
+        return output_override
+
+    input_path = Path(input_file)
+    cy = datetime.now().year
+    output_name = f"{cy}_birthdays"
+    output_path = input_path.parent / output_name
+    return str(output_path)
 
 
 def convert_to_todoist_csv(data_dict, filename="birthdays.csv"):
@@ -160,11 +202,43 @@ def convert(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(prog='Birthday Calendar Converter',
-                                     description='Converts a .vcf contacts file from Proton Mail to a birthday calendar .ics that can be imported into Proton Calendar.')
-    parser.add_argument('input', type=str, help='Path to the contacts (.vcf) file.')
-    parser.add_argument('output', type=str, help='Path to the output files.')
+    parser = argparse.ArgumentParser(
+        prog='Birthday Calendar Converter',
+        description='Converts a .vcf contacts file from Proton Mail to a birthday '
+                    'calendar .ics that can be imported into Proton Calendar.'
+    )
+    parser.add_argument(
+        'input_directory',
+        type=str,
+        nargs='?',
+        default='~/Downloads',
+        help='Path to the directory containing .vcf files. Defaults to "~/Downloads". '
+             'Script will find the most recent file with a .vcf suffix.'
+    )
+    parser.add_argument(
+        '-o', '--output',
+        type=str,
+        default=None,
+        help='Override output file path (without extension). By default, output is '
+             'named "birthday_<current_year>" in the same directory as the input file. '
+             'Both .ics and .csv files are generated.'
+    )
 
     args = parser.parse_args()
 
-    convert(input_vcf_file_path=args.input, output_file_path=args.output)
+    try:
+        input_file = find_most_recent_vcf_file(args.input_directory)
+        output_base = derive_output_path(input_file, args.output)
+        current_year = datetime.now().year
+
+        print(f"Input:  {input_file}")
+        print(f"Output: {output_base}.ics / {output_base}.csv")
+
+        convert(input_vcf_file_path=input_file, output_file_path=output_base)
+
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Unexpected error: {e}", file=sys.stderr)
+        sys.exit(1)
