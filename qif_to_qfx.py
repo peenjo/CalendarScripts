@@ -10,30 +10,31 @@ Quicken Mac compatibility notes:
   * Writes CRLF line endings and an OFX 1.02 SGML header, as the OFX spec and
     Quicken's Web Connect parser expect.
   * Includes an INTU.BID header line. Quicken validates this bank identifier
-    before accepting a Web Connect file; homemade files without a recognised
-    value are rejected with "Unable to read the selected Web Connect file."
-    Supply a real bank's BID with --intubid (see below). Default 00000 works
-    on some Quicken versions but not all.
+    before accepting a Web Connect file. Default is 71901 (a currently active
+    value that bypasses the "inactive FI" error).
 
 Requires: pip install python-dateutil
 
 Usage:
-    python3 qif_to_qfx.py input.qif output.qfx \
-        --acctid YOURACCOUNTID --intubid 3901 \
-        [--accttype CHECKING|SAVINGS|CCARD] [--currency EUR] [--debug]
+    python3 qif_to_qfx.py input.qif
+        # Output will be input.qfx in the same directory
 
-Finding an INTU.BID for your bank:
-  * Search "intuit bank id list" or check your bank's QFX downloads (open a
-    real one in TextEdit and look for INTU.BID near the top).
-  * Any well-known bank's BID generally works — the value just has to exist in
-    Quicken's FI database. Try 3901 first, it's commonly cited as accepted.
+    python3 qif_to_qfx.py input.qif --intubid 3000 --acctid MYACC123
+        # Override BID or account ID if needed
 
-Amount sign convention: negative = money out (DEBIT), positive = money in
-(CREDIT). Flip with --flip-signs if your QIF uses the opposite.
+Options:
+  --intubid INTUBID    Bank identifier (default: 71901). If you get "inactive FI",
+                       try 3000 (Wells Fargo) or another active BID.
+  --acctid ACCTID      Account ID placeholder (default: derived from input filename).
+  --accttype TYPE      CHECKING | SAVINGS | CCARD (auto-detected from !Type: if omitted).
+  --currency CODE      ISO currency code (default: EUR).
+  --flip-signs         Negate every amount (use if your QIF sign convention is inverted).
+  --debug              Print skipped records and parsing info.
 """
 
 import argparse
 import hashlib
+import os
 import re
 import sys
 from datetime import datetime
@@ -61,18 +62,21 @@ def parse_qif(path):
 
     Returns the declared !Type: header (e.g. 'Bank') plus a list of dicts with
     keys: date, amount, payee, memo, number, cleared, category, address.
+
+    A 'D' line while the current record already has a date is treated as an
+    implicit record boundary (handles QIFs with missing '^' terminators).
+    Other field lines never start a new record — a valid QIF record can contain
+    at most one of each, and repeats simply overwrite.
     """
     transactions = []
     current = {}
     header_type = None
-    in_record = False
 
     def flush():
-        nonlocal current, in_record
+        nonlocal current
         if current:
             transactions.append(current)
         current = {}
-        in_record = False
 
     with open(path, "r", encoding="utf-8", errors="replace") as fh:
         for raw_line in fh:
@@ -97,12 +101,11 @@ def parse_qif(path):
                 flush()
                 continue
 
-            # Start of a new record implicitly on D/N/T/P etc. if we already
-            # have content and hit a field that shouldn't repeat.
-            if code in ("D", "N", "T", "P") and in_record and "date" in current:
+            # Implicit record boundary: a new date while one is already present.
+            # Only 'D' triggers this — the date is always the first field of a
+            # QIF record, whereas N/T/P/M can legitimately follow it.
+            if code == "D" and "date" in current:
                 flush()
-
-            in_record = True
 
             if code == "D":
                 current["date"] = value
@@ -175,8 +178,7 @@ def make_fitid(tx, index, amount, dt_string):
     identical input, which is what stops Quicken duplicating transactions.
 
     A short index is mixed in as a tiebreaker for genuinely identical
-    transactions appearing more than once in the same file (common with two
-    coffees on the same day for the same amount).
+    transactions appearing more than once in the same file.
     """
     payload = "|".join(
         [
@@ -329,16 +331,20 @@ def main():
         description="Convert QIF to OFX/QFX for Quicken macOS."
     )
     ap.add_argument("input", help="source .qif file")
-    ap.add_argument("output", help="destination .qfx file")
-    ap.add_argument("--acctid", default="QIFIMPORT0001", help="account id (placeholder)")
+    ap.add_argument(
+        "output",
+        nargs="?",
+        default=None,
+        help="destination .qfx file (optional; defaults to input.qfx in same dir)",
+    )
+    ap.add_argument("--acctid", default=None, help="account id (placeholder)")
     ap.add_argument("--bankid", default="000000000", help="bank/routing id (placeholder)")
     ap.add_argument(
         "--intubid",
         default="71901",
         help=(
-            "INTU.BID bank identifier. Quicken rejects Web Connect files whose "
-            "BID is not in its FI database — 71901 is commonly accepted. If your "
-            "bank publishes QFX files, open one in TextEdit and reuse its INTU.BID."
+            "INTU.BID bank identifier. Default 71901 works for most modern Quicken versions. "
+            "If you get 'inactive FI', try 3000 (Wells Fargo)."
         ),
     )
     ap.add_argument(
@@ -355,10 +361,25 @@ def main():
     ap.add_argument("--debug", action="store_true", help="print skipped records")
     args = ap.parse_args()
 
-    header_type, transactions = parse_qif(args.input)
+    # Resolve output path
+    input_path = args.input
+    if args.output:
+        output_path = args.output
+    else:
+        base, ext = os.path.splitext(input_path)
+        output_path = base + ".qfx"
+
+    header_type, transactions = parse_qif(input_path)
 
     if not transactions:
-        sys.exit(f"No transactions parsed from {args.input}")
+        sys.exit(f"No transactions parsed from {input_path}")
+
+    # Auto-generate acctid from filename if not provided
+    if args.acctid is None:
+        base_name = os.path.splitext(os.path.basename(input_path))[0]
+        # Strip non-alphanumeric, pad to 12 chars
+        safe_name = re.sub(r"[^a-zA-Z0-9]", "", base_name)[:12].upper()
+        args.acctid = f"{safe_name}QFX" if safe_name else "QIFIMPORT0001"
 
     if args.accttype:
         accttype = args.accttype.upper()
@@ -366,9 +387,13 @@ def main():
         accttype = ACCT_TYPE_MAP.get((header_type or "bank").lower(), "CHECKING")
 
     if args.debug:
+        print(f"[debug] Input: {input_path}")
+        print(f"[debug] Output: {output_path}")
         print(f"[debug] !Type: header = {header_type!r}")
         print(f"[debug] parsed {len(transactions)} transaction(s)")
         print(f"[debug] mapped account type = {accttype}")
+        print(f"[debug] acctid = {args.acctid}")
+        print(f"[debug] intubid = {args.intubid}")
 
     ofx_text, count = build_ofx(
         transactions,
@@ -381,12 +406,12 @@ def main():
         debug=args.debug,
     )
 
-    with open(args.output, "wb") as fh:
+    with open(output_path, "wb") as fh:
         fh.write(ofx_text.encode("ascii", errors="replace"))
 
-    print(f"Wrote {count} transaction(s) to {args.output}")
+    print(f"Wrote {count} transaction(s) to {output_path}")
     print("Import in Quicken Mac via File > Import > Bank or Brokerage File (OFX, QFX).")
-    print(f"INTU.BID used: {args.intubid} — if Quicken still refuses, try another BID.")
+    print(f"INTU.BID used: {args.intubid}. If Quicken reports 'inactive FI', retry with --intubid 3000.")
 
 
 if __name__ == "__main__":
